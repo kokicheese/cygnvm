@@ -1,0 +1,229 @@
+#!/bin/bash
+
+
+if echo $(uname -a) | grep -q win; then
+  echo
+else
+  echo "Unsupported platforms"
+  exit -1;
+fi
+
+node_url="http://nodejs.org/dist/"
+cygnvm_dir=$(cd $(dirname ${BASH_SOURCE[0]:-$0}) && pwd)
+
+install()
+{
+  _cd=`pwd`
+  node_ver=$1
+  echo $node_ver | egrep '^v' > /dev/null
+  
+  ret=$?
+  
+  if [ $ret -ne 0 ]; then
+    node_ver="v$node_ver"
+  fi
+
+  exeurl="$node_url$node_ver/node.exe"
+  node_home="$cygnvm_dir/$node_ver"
+
+  echo "Starting install: $node_ver"
+  if [ ! -d $node_home ]; then
+    mkdir $node_home
+  fi
+  
+  cd $node_home
+
+  echo "Donwload: node.exe"
+  curl -# $exeurl > node.exe
+  
+  nvm_checksum $(sha1sum node.exe | awk '{print $1}') $(curl "$node_url/$node_ver/SHASUMS.txt"|grep node.exe|awk '{print $1}')
+  ret=$?
+
+  if [ $ret -eq 1 ]; then
+    rm -rf $node_home
+    return
+  fi
+  
+  chmod +x node.exe
+
+  npm_install 
+  ret=$?
+  if [ $ret -eq 1 ];then
+    rm -rf $node_home
+    return
+  fi
+
+  #rm -rf $node_home
+  cd $_cd
+
+  nvm_use $node_ver
+  return 0
+}
+
+npm_install()
+{
+  versions=$(curl -s $node_url/npm/ \
+  | egrep -o 'npm-[0-9]+\.[0-9]+\.[0-9]+\.zip' \
+  | sort -t. -u -k 1.2,1n -k 2,2n -k 3,3n \
+  | tac
+  )
+  npmzip=(`echo $versions| cat`)
+  
+  echo "Download: $npmzip"
+  curl -# "$node_url/npm/$npmzip" > $npmzip
+
+  unzip $npmzip > /dev/null
+  rm -rf $npmzip
+
+  if [ ! -f "npm.cmd" ]; then
+    return 1
+  fi
+  
+  npmbin=`pwd`/node_modules/npm/bin/npm
+
+  mv  $npmbin ./npm
+  chmod +x ./npm
+
+  return 0
+}
+
+nvm_checksum()
+{
+  if [ "$1" = "$2" ];then
+    return 0
+  else
+    echo "Checksums do not match."
+    return 1
+  fi
+}
+
+ls_remote()
+{
+  versions=$(curl -s $node_url \
+  | egrep -o 'v[0-9]+\.[0-9]+\.[0-9]+' \
+  | sort -t. -u -k 1.2,1n -k 2,2n -k 3,3n
+  )
+  version=( `echo $versions | tr -s " " ' '`)
+  echo $versions
+  
+  return 0;
+}
+
+nvm_use()
+{
+  node_ver=$1
+  echo $node_ver | egrep '^v' > /dev/null
+  ret=$?
+  if [ $ret -ne 0 ]; then
+    node_ver="v$node_ver"
+  fi
+  
+  if [ ! -d $cygnvm_dir/$node_ver ];then
+    echo "Not installed."
+    echo "Request. cygnvm install $node_ver"
+    return 1
+  fi
+  
+  echo $PATH | grep "$cygnvm_dir/bin"
+  ret=$?
+  
+  if [ $ret -eq 1 ];then
+    PATH=$cygnvm_dir/bin:$PATH
+    export PATH
+  fi
+
+  mk_ln $node_ver 
+
+  echo "Use $node_ver"
+  return
+}
+
+mk_ln()
+{
+  dir="$cygnvm_dir/$1/"
+  cmd="cmd /c mklink"
+  
+  if [ -L $cygnvm_dir/bin ];then
+    rm -rf $cygnvm_dir/bin
+  elif [ -d $cygnvm_dir/bin ];then
+    rm -rf $cygnvm_dir/bin
+  fi
+
+  $cmd /d $(cygpath -w $cygnvm_dir/bin)  $(cygpath -w $dir) > /dev/null
+  
+  return
+}
+
+help()
+{
+  cat <<EOF
+Node Version Manager for Cygwin
+
+Usage:
+    cygnvm help                Show this message
+    cygnvm install <version>   Download and install a <version>
+    cygnvm uninstall <version> Uninstall a <version>
+    cygnvm use <version>       Modify PATH to use <version>
+    cygnvm ls                  List installed version
+    cygnvm ls-remote           List remote version available for install
+
+Example:
+    cygnvm install v0.11.0     Install a specific version number
+    cygnvm use v0.11.0         Use the soecific version
+
+EOF
+
+return 0;
+}
+
+
+case $1 in
+  help)
+  help  
+  ;;
+  install)
+    install $2
+  ;;
+  uninstall)
+    node_ver=$2
+    echo $node_ver | egrep '^v' > /dev/null
+    ret=$?
+    if [ $ret -ne 0 ]; then
+      node_ver="v$node_ver"
+    fi
+    #echo "rm: $cygnvm_dir/$node_ver"
+    rm -rf $cygnvm_dir/$node_ver > /dev/null
+
+    if [ $node_ver =  $(basename $(ls -l $cygnvm_dir/bin | awk '{print $11}')) ];then
+      rm -rf $cygnvm/bin
+    fi
+    echo $node_ver
+
+  ;;
+  use)
+    ver=$2
+    
+    if [ ! $ver ];then
+      if [ ! -L $cygnvm_dir/bin ];then
+        echo "Do not use."
+        exit
+      else
+        echo "Useing: $(basename $(ls -l $cygnvm_dir/bin | awk '{print $11}'))"
+      fi
+      exit
+    fi
+    nvm_use $2
+  ;;
+  ls)
+    for t in $cygnvm_dir/v* ;do
+      echo $(basename $t)
+    done
+  ;;
+  ls-remote)
+    ls_remote
+  ;;
+  *)
+    help
+esac
+
+
